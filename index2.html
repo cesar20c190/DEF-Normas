@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assistente Jurídico (Com Memória)</title>
+    <style>
+        /* (Mantive o mesmo estilo bonito de antes) */
+        body { font-family: 'Segoe UI', sans-serif; background-color: #eef2f5; display: flex; justify-content: center; height: 100vh; margin: 0; }
+        .chat-container { width: 90%; max-width: 900px; background: white; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 90vh; margin-top: 5vh; border-radius: 15px; overflow: hidden; }
+        .header { background: linear-gradient(135deg, #005a34 0%, #004d2c 100%); color: white; padding: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .messages { flex: 1; padding: 30px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; background-color: #fafafa; }
+        .message { max-width: 80%; padding: 18px; border-radius: 12px; line-height: 1.6; position: relative; }
+        .user { align-self: flex-end; background-color: #005a34; color: white; border-bottom-right-radius: 2px; }
+        .bot { align-self: flex-start; background-color: #ffffff; color: #333; border: 1px solid #e0e0e0; border-bottom-left-radius: 2px; }
+        .input-area { padding: 25px; background: #fff; border-top: 1px solid #eee; display: flex; gap: 15px; }
+        input { flex: 1; padding: 15px; border: 2px solid #e0e0e0; border-radius: 10px; outline: none; font-size: 16px; }
+        button { padding: 0 30px; background-color: #005a34; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
+        .sources-box { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; font-size: 0.85em; color: #666; }
+        .loading { text-align: center; color: #888; font-size: 0.9rem; padding: 10px; display: none; }
+        .btn-clear { background: rgba(255,255,255,0.2); border: none; padding: 5px 10px; color: white; cursor: pointer; border-radius: 5px; font-size: 0.8rem;}
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="header">
+        <div>⚖️ Assistente DPE-BA <small>(Memória Ativa)</small></div>
+        <button class="btn-clear" onclick="limparMemoria()">Limpar Conversa</button>
+    </div>
+    
+    <div class="messages" id="messages">
+        <div class="message bot">Olá! Sou sua IA jurídica. Agora consigo lembrar do contexto da nossa conversa.</div>
+    </div>
+    
+    <div class="loading" id="loader">Pensando...</div>
+
+    <div class="input-area">
+        <input type="text" id="userInput" placeholder="Digite sua pergunta..." onkeypress="handleEnter(event)">
+        <button onclick="enviarPergunta()" id="btnSend">Enviar</button>
+    </div>
+</div>
+
+<script>
+    // Variável global para guardar o histórico
+    let conversationHistory = [];
+
+    async function enviarPergunta() {
+        const input = document.getElementById('userInput');
+        const btn = document.getElementById('btnSend');
+        const loader = document.getElementById('loader');
+        const pergunta = input.value.trim();
+
+        if (!pergunta) return;
+
+        appendMessage(pergunta, 'user');
+        input.value = '';
+        input.disabled = true;
+        btn.disabled = true;
+        loader.style.display = 'block';
+
+        try {
+            // Envia PERGUNTA + HISTÓRICO para o servidor
+            const response = await fetch('http://localhost:3001/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    pergunta: pergunta,
+                    historico: conversationHistory // <--- O segredo da memória
+                })
+            });
+
+            const data = await response.json();
+            
+            appendMessage(data.resposta, 'bot', data.fontes);
+
+            // Atualiza o histórico local
+            // Adiciona a pergunta do usuário e a resposta da IA na memória
+            conversationHistory.push({ role: "user", content: pergunta });
+            conversationHistory.push({ role: "assistant", content: data.resposta });
+
+        } catch (error) {
+            appendMessage("Erro de conexão.", 'bot');
+        } finally {
+            input.disabled = false;
+            btn.disabled = false;
+            loader.style.display = 'none';
+            input.focus();
+        }
+    }
+
+    function appendMessage(text, sender, fontes = []) {
+        const messagesDiv = document.getElementById('messages');
+        const div = document.createElement('div');
+        div.className = `message ${sender}`;
+        
+        let htmlContent = text.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        if (fontes && fontes.length > 0) {
+            htmlContent += `<div class="sources-box"><strong>📚 Fontes:</strong><br>${fontes.join('<br>')}</div>`;
+        }
+
+        div.innerHTML = htmlContent;
+        messagesDiv.appendChild(div);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function limparMemoria() {
+        conversationHistory = [];
+        document.getElementById('messages').innerHTML = '<div class="message bot">Memória limpa! Pode começar um novo assunto.</div>';
+    }
+
+    function handleEnter(e) { if (e.key === 'Enter') enviarPergunta(); }
+</script>
+
+</body>
+</html>
