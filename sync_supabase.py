@@ -243,10 +243,10 @@ def fetch_normativas_rows(conn: sqlite3.Connection) -> list[dict]:
 def main():
     parser = argparse.ArgumentParser(description="Sincroniza SQLite com Supabase e Diário Oficial.")
     parser.add_argument("--sqlite-path", default=DEFAULT_SQLITE_PATH)
-    parser.add_argument("--supabase-url", default=os.getenv("https://kaemcsfdvsqcupgmenqn.supabase.co", ""))
+    parser.add_argument("--supabase-url", default=os.getenv("SUPABASE_URL", ""))
     parser.add_argument(
         "--supabase-key",
-        default=os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("REDACTED_SUPABASE_KEY", ""),
+        default=os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY", ""),
     )
     parser.add_argument("--supabase-diario-table", default="diario_entries")
     parser.add_argument("--supabase-normativas-table", default="normativas_entries")
