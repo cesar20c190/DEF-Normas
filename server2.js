@@ -2,109 +2,191 @@ import express from 'express'
 import cors from 'cors'
 import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
+import multer from 'multer'
+import { spawn } from 'child_process' 
+import path from 'path'
+import { fileURLToPath } from 'url'
 import 'dotenv/config'
 
+// Configuração para caminhos no ES Modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express()
-app.use(express.json())
+app.use(express.json({ limit: '50mb' })) 
+app.use(express.urlencoded({ limit: '50mb', extended: true }))
 app.use(cors())
 
+const upload = multer({ storage: multer.memoryStorage() })
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+const CLIENTE_ATUAL = 'dpe-ba';
 
-// Filtro de Segurança do Cliente
-const CLIENTE_ATUAL = process.env.CLIENTE_ATUAL || 'dpe-ba';
+// --- FUNÇÃO AUXILIAR: CHAMAR O PYTHON ---
+function extrairTextoComPython(bufferDoArquivo) {
+    return new Promise((resolve, reject) => {
+        // Caminho absoluto para o script python para evitar erros de pasta
+        const scriptPath = path.join(__dirname, 'extrator.py');
+        
+        // Define comando (windows vs linux/mac)
+        // Se no seu terminal você usa 'python3', altere aqui.
+        const comandoPython = process.platform === "win32" ? "python" : "python3";
+        
+        const pythonProcess = spawn(comandoPython, [scriptPath]);
 
+        let textoResultado = '';
+        let erroResultado = '';
+
+        // Trata erro ao tentar iniciar o processo (ex: python não instalado)
+        pythonProcess.on('error', (err) => {
+            reject(new Error(`Falha ao iniciar Python: ${err.message}`));
+        });
+
+        // Envia o arquivo para o Python via Stdin (Stream)
+        try {
+            pythonProcess.stdin.write(bufferDoArquivo);
+            pythonProcess.stdin.end();
+        } catch (err) {
+            reject(new Error(`Erro ao escrever no stdin do Python: ${err.message}`));
+        }
+
+        // Ouve a resposta do Python
+        pythonProcess.stdout.on('data', (data) => {
+            textoResultado += data.toString();
+        });
+
+        // Ouve erros do script Python
+        pythonProcess.stderr.on('data', (data) => {
+            erroResultado += data.toString();
+        });
+
+        // Quando o Python terminar
+        pythonProcess.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(`Script Python falhou (Exit Code ${code}): ${erroResultado}`));
+            } else {
+                resolve(textoResultado);
+            }
+        });
+    });
+}
+
+// --- ROTA 1: UPLOAD (VIA PYTHON) ---
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ erro: 'Nenhum arquivo enviado.' })
+
+    console.log(`\n📂 [Upload] Enviando para Python: ${req.file.originalname}`)
+    
+    // Chama o script Python
+    const textoExtraido = await extrairTextoComPython(req.file.buffer);
+
+    if (!textoExtraido || textoExtraido.trim().length === 0) {
+        console.warn("⚠️ Python retornou texto vazio.");
+        res.json({ texto: "[O PDF foi lido, mas não contém texto selecionável. Pode ser uma imagem escaneada.]" });
+        return;
+    }
+
+    console.log(`✅ Sucesso! Python extraiu ${textoExtraido.length} caracteres.`);
+    res.json({ texto: textoExtraido })
+
+  } catch (erro) {
+    console.error("Erro no upload:", erro.message)
+    res.status(500).json({ erro: `Falha ao processar PDF: ${erro.message}` })
+  }
+})
+
+// --- ROTA 2: CHAT (IA) ---
 app.post('/api/chat', async (req, res) => {
   try {
-    // Recebe pergunta e histórico do frontend
-    const { pergunta, historico } = req.body
+    const { pergunta, historico, contexto_arquivo } = req.body
     
     if (!pergunta) return res.status(400).json({ erro: 'Pergunta vazia.' })
 
-    console.log(`\n📩 [Server 2] Pergunta: "${pergunta}"`)
+    console.log(`\n📩 [Chat] Pergunta: "${pergunta}"`)
+    
+    if (contexto_arquivo) {
+        console.log(`📎 [Anexo] Usando contexto do arquivo (${contexto_arquivo.length} chars).`)
+    }
 
-    // 1. Gerar Vetor da Pergunta
+    // 1. Gerar Vetor
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: pergunta,
     })
     const vetorPergunta = embeddingResponse.data[0].embedding
 
-    // 2. Buscar no Banco (com filtro de cliente)
+    // 2. Busca no Supabase
     const { data: documentos, error } = await supabase.rpc('match_documents', {
       query_embedding: vetorPergunta,
       match_threshold: 0.40,
-      match_count: 10, // Aumentei para 10 para ter mais chance de achar o artigo exato
-      filtro_cliente_id: CLIENTE_ATUAL
+      match_count: 10,       
+      filtro_cliente_id: CLIENTE_ATUAL,
+      query_text: ""         
     })
 
-    if (error) {
-        console.error("Erro Supabase:", error);
-        throw error;
-    }
+    if (error) throw error
 
-    // 3. Preparar Contexto (Aqui estava o erro antes, agora corrigido)
-    const contexto = documentos && documentos.length > 0 
-      ? documentos.map(d => d.content).join('\n\n---\n\n')
-      : "Nenhum documento específico encontrado.";
+    // 3. Contexto
+    const contextoBanco = documentos && documentos.length > 0 
+        ? documentos.map(d => d.content).join('\n\n---\n\n') 
+        : "";
 
-    // Prepara lista de fontes para exibir no final
     const fontesUnicas = documentos ? [...new Set(documentos.map(d => `${d.source.toUpperCase()}: ${d.title || 'S/ Título'} (ID: ${d.external_id})`))] : [];
 
-    // 4. Montagem da Inteligência (Prompt Jurídico Sênior)
+    if (!contextoBanco && !contexto_arquivo) {
+        return res.json({ 
+            resposta: "Não encontrei informações relevantes no banco de dados e nenhum arquivo foi anexado.",
+            fontes: []
+        })
+    }
+
+    // 4. Inteligência
     const chatResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { 
           role: "system", 
           content: `
-          ATUAÇÃO:
-          Você é um Consultor Jurídico Sênior da Defensoria Pública da Bahia (DPE-BA). 
-          Sua função é fornecer respostas estritamente técnicas baseadas nos documentos fornecidos.
-
-          DIRETRIZES RÍGIDAS DE RESPOSTA:
-          1. CITAÇÃO OBRIGATÓRIA: Toda afirmação deve vir acompanhada da fonte entre parênteses. Exemplo: "O prazo é de 15 dias (Lei Complementar 26, Art. 12)".
-          2. ESTRUTURA:
-             - Inicie com uma resposta direta à dúvida.
-             - Em seguida, crie um tópico "Fundamentação Legal" e liste os artigos relevantes.
-             - Se houver prazos, destaque-os em **negrito**.
-          3. SEM ALUCINAÇÃO:
-             - Se o contexto não tiver a resposta, diga explicitamente: "A informação solicitada não consta nos documentos consultados."
-             - Não use seu conhecimento externo para inventar leis que não estão no contexto.
-             - Na constução da resposta dê prioridade aos dados dos documentos informados.
+          ATUAÇÃO: Consultor Jurídico Sênior da DPE-BA.
+          OBJETIVO: Responder cruzando o PDF ANEXADO (se houver) com as NORMAS DO BANCO.
+          
+          DIRETRIZES:
+          1. Use o PDF Anexado como fato concreto.
+          2. Use o Banco de Dados como base legal.
+          3. Cite sempre a fonte.
           ` 
         },
-        // Injeta o histórico da conversa (Memória)
         ...(historico || []), 
-        // Injeta o contexto e a pergunta atual
         { 
           role: "user", 
           content: `
-          CONTEXTO DOS DOCUMENTOS :
-          ${contexto}
+          === 1. TEXTO DO ARQUIVO ANEXADO ===
+          ${contexto_arquivo || "(Nenhum)"}
+
+          === 2. NORMAS DO BANCO DE DADOS ===
+          ${contextoBanco || "(Nenhuma)"}
           
-          PERGUNTA DO PROCURADOR: 
+          === 3. PERGUNTA ===
           ${pergunta}
           ` 
         }
       ],
-      temperature: 0, // Zero criatividade para garantir fidelidade
+      temperature: 0,
     })
 
-    const respostaIA = chatResponse.choices[0].message.content
-
     res.json({
-      resposta: respostaIA,
+      resposta: chatResponse.choices[0].message.content,
       fontes: fontesUnicas
     })
 
   } catch (erro) {
-    console.error("Erro no Server 2:", erro)
-    res.status(500).json({ erro: "Erro interno no processamento." })
+    console.error("Erro no Server:", erro)
+    res.status(500).json({ erro: "Erro interno." })
   }
 })
 
-const PORT = process.env.PORT || 3001
+const PORT = 3001
 app.listen(PORT, () => {
-  console.log(`\n⚖️  SERVER JURÍDICO (MEMÓRIA + CITAÇÕES) RODANDO NA PORTA ${PORT}!`)
+  console.log(`\n🚀 SERVIDOR HÍBRIDO (NODE + PYTHON) RODANDO NA PORTA ${PORT}!`)
 })
