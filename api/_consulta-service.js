@@ -1,8 +1,5 @@
-import express from 'express'
-import cors from 'cors'
 import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
-import 'dotenv/config'
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -16,7 +13,6 @@ const OPENAI_API_KEY = requireEnv('OPENAI_API_KEY')
 const SUPABASE_URL = requireEnv('SUPABASE_URL')
 const SUPABASE_SERVICE_ROLE_KEY = requireEnv('SUPABASE_SERVICE_ROLE_KEY')
 
-const PORT = Number.parseInt(process.env.PORT ?? '3001', 10)
 const CLIENTE_ATUAL = process.env.CLIENTE_ATUAL ?? 'dpe-ba'
 const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL ?? 'gpt-4o-mini'
 const OPENAI_EMBED_MODEL = process.env.OPENAI_EMBED_MODEL ?? 'text-embedding-3-small'
@@ -80,7 +76,7 @@ async function withRetry(label, fn, attempts = OPENAI_RETRY_ATTEMPTS) {
   throw lastError
 }
 
-function explainError(error) {
+export function explainError(error) {
   const message = error?.message ?? ''
   if (error?.name === 'APIConnectionTimeoutError' || /timed out/i.test(message)) {
     return 'Timeout ao conectar na OpenAI.'
@@ -91,86 +87,70 @@ function explainError(error) {
   return message || 'Erro interno.'
 }
 
-const app = express()
-app.use(express.json({ limit: '10mb' }))
-app.use(cors())
-app.use(express.static('public'))
+export async function consultarPergunta(pergunta) {
+  const perguntaLimpa = (pergunta ?? '').trim()
+  if (!perguntaLimpa) {
+    throw new Error('Pergunta vazia.')
+  }
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'consulta-ia' })
-})
-
-async function handleConsulta(req, res) {
-  try {
-    const pergunta = (req.body?.pergunta ?? '').trim()
-
-    if (!pergunta) {
-      return res.status(400).json({ erro: 'Pergunta vazia.' })
-    }
-
-    const embeddingResponse = await withRetry('embeddings', () =>
-      openai.embeddings.create({
-        model: OPENAI_EMBED_MODEL,
-        input: pergunta,
-      })
-    )
-
-    const vetorPergunta = embeddingResponse.data[0].embedding
-
-    const { data: documentos, error } = await supabase.rpc('match_documents', {
-      query_embedding: vetorPergunta,
-      match_threshold: SEARCH_MATCH_THRESHOLD,
-      match_count: SEARCH_MATCH_COUNT,
-      filtro_cliente_id: CLIENTE_ATUAL,
-      query_text: pergunta,
+  const embeddingResponse = await withRetry('embeddings', () =>
+    openai.embeddings.create({
+      model: OPENAI_EMBED_MODEL,
+      input: perguntaLimpa,
     })
+  )
 
-    if (error) {
-      throw new Error(`Erro SQL: ${error.message}`)
+  const vetorPergunta = embeddingResponse.data[0].embedding
+
+  const { data: documentos, error } = await supabase.rpc('match_documents', {
+    query_embedding: vetorPergunta,
+    match_threshold: SEARCH_MATCH_THRESHOLD,
+    match_count: SEARCH_MATCH_COUNT,
+    filtro_cliente_id: CLIENTE_ATUAL,
+    query_text: perguntaLimpa,
+  })
+
+  if (error) {
+    throw new Error(`Erro SQL: ${error.message}`)
+  }
+
+  const docs = documentos ?? []
+  const contextoBanco = docs
+    .slice(0, CONTEXT_MAX_DOCS)
+    .map((d) => d.content)
+    .join('\n\n---\n\n')
+    .slice(0, CONTEXT_MAX_CHARS)
+  const fontes = [
+    ...new Set(docs.map((d) => `${d.source?.toUpperCase()}: ${d.title || 'S/ Titulo'} (ID: ${d.external_id})`)),
+  ]
+
+  if (!contextoBanco) {
+    return {
+      resposta: 'Nao encontrei informacoes relevantes na base para essa pergunta.',
+      fontes: [],
     }
+  }
 
-    const docs = documentos ?? []
-    const contextoBanco = docs.slice(0, CONTEXT_MAX_DOCS).map((d) => d.content).join('\n\n---\n\n').slice(0, CONTEXT_MAX_CHARS)
-    const fontes = [...new Set(docs.map((d) => `${d.source?.toUpperCase()}: ${d.title || 'S/ Titulo'} (ID: ${d.external_id})`))]
-
-    if (!contextoBanco) {
-      return res.json({
-        resposta: 'Nao encontrei informacoes relevantes na base para essa pergunta.',
-        fontes: [],
-      })
-    }
-
-    const chatResponse = await withRetry('chat', () =>
-      openai.chat.completions.create({
-        model: OPENAI_CHAT_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Voce e um assistente juridico da DPE-BA. Responda apenas com base no contexto fornecido e cite limites quando nao houver base suficiente.',
-          },
-          {
-            role: 'user',
-            content: `CONTEXTO:\n${contextoBanco}\n\nPERGUNTA:\n${pergunta}`,
-          },
-        ],
-        temperature: 0.1,
-      })
-    )
-
-    return res.json({
-      resposta: chatResponse.choices[0]?.message?.content ?? 'Sem resposta.',
-      fontes,
+  const chatResponse = await withRetry('chat', () =>
+    openai.chat.completions.create({
+      model: OPENAI_CHAT_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Voce e um assistente juridico da DPE-BA. Responda apenas com base no contexto fornecido e cite limites quando nao houver base suficiente.',
+        },
+        {
+          role: 'user',
+          content: `CONTEXTO:\n${contextoBanco}\n\nPERGUNTA:\n${perguntaLimpa}`,
+        },
+      ],
+      temperature: 0.1,
     })
-  } catch (error) {
-    console.error('[consulta] erro:', error)
-    return res.status(500).json({ erro: explainError(error) })
+  )
+
+  return {
+    resposta: chatResponse.choices[0]?.message?.content ?? 'Sem resposta.',
+    fontes,
   }
 }
-
-app.post('/api/consulta', handleConsulta)
-app.post('/api/chat', handleConsulta)
-
-app.listen(PORT, () => {
-  console.log(`Consulta IA disponivel em http://localhost:${PORT}/consulta.html`)
-})
