@@ -1,7 +1,8 @@
 {
   "type": "module",
   "scripts": {
-    "start": "node server2.js"
+    "start": "node server2.js",
+    "start:consulta": "node server-consulta.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.93.3",

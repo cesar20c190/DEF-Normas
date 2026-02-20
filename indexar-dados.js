@@ -4,6 +4,7 @@ import 'dotenv/config'
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const CLIENTE_ATUAL = 'dpe-ba'
 
 // CONFIGURAÇÃO TURBO
 const BATCH_SIZE = 50; // Processa 50 pedaços por vez
@@ -49,6 +50,7 @@ async function processarLote(batchItens) {
 
     // 3. Mescla os vetores recebidos com os dados originais
     const dadosParaSalvar = batchItens.map((item, index) => ({
+      cliente_id: CLIENTE_ATUAL,
       source: item.source,
       external_id: item.external_id,
       content: item.content,

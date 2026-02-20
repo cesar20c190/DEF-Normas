@@ -120,7 +120,7 @@ app.post('/api/chat', async (req, res) => {
     const { data: documentos, error } = await supabase.rpc('match_documents', {
       query_embedding: vetorPergunta,
       match_threshold: 0.40,
-      match_count: 10,       
+      match_count: 20,       
       filtro_cliente_id: CLIENTE_ATUAL,
       query_text: ""         
     })
@@ -186,7 +186,7 @@ app.post('/api/chat', async (req, res) => {
   }
 })
 
-const PORT = process.env.PORT || 3001
+const PORT = 3001
 app.listen(PORT, () => {
   console.log(`\n🚀 SERVIDOR HÍBRIDO (NODE + PYTHON) RODANDO NA PORTA ${PORT}!`)
 })

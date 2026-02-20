@@ -94,11 +94,6 @@
 </div>
 
 <script>
-    const API_BASE = (window.API_BASE ||
-        ((location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-            ? 'http://localhost:3001' : 'https://def-normas-1.onrender.com')
-    ).replace(/\/$/, '');
-
     let conversationHistory = [];
 
     // --- FUNÇÕES DE ARQUIVO ---
@@ -152,7 +147,7 @@
                 const formData = new FormData();
                 formData.append('file', fileInput.files[0]);
 
-                const uploadRes = await fetch(`${API_BASE}/api/upload`, {
+                const uploadRes = await fetch('http://localhost:3001/api/upload', {
                     method: 'POST',
                     body: formData
                 });
@@ -172,7 +167,7 @@
             // Se o usuário só mandou arquivo sem pergunta, definimos uma pergunta padrão
             const perguntaFinal = pergunta || "Faça uma análise jurídica deste documento anexado considerando as normas da DPE-BA.";
 
-            const response = await fetch(`${API_BASE}/api/chat`, {
+            const response = await fetch('http://localhost:3001/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 

@@ -383,7 +383,7 @@ def generate_sql_query(question: str, limit: int = 10) -> str:
     if llm is None:
         debug_log(
             f"[GROQ SQL] LLM indisponível (GROQ_AVAILABLE={GROQ_AVAILABLE}, "
-            f"GROQ_API_KEY=REDACTED
+            f"GROQ_API_KEY=REDACTED)"
         )
         return ""
     debug_log(f"[GROQ SQL] Pergunta: {truncate_value(question, 200)} | limit={limit}")
@@ -477,7 +477,7 @@ def build_sql_answer(question: str, sql: str, rows: list, columns: list):
     if llm is None:
         debug_log(
             f"[GROQ ANSWER] LLM indisponível (GROQ_AVAILABLE={GROQ_AVAILABLE}, "
-            f"GROQ_API_KEY=REDACTED
+            f"GROQ_API_KEY=REDACTED)"
         )
         return ""
     preview_rows = compact_rows_for_llm(rows, max_rows=10)

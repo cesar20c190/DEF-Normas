@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Consulta IA DPE-BA</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --primary: #005a34;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #d1d5db;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: linear-gradient(160deg, #eef5f1, var(--bg));
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+    .card {
+      width: min(900px, 100%);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 12px 26px rgba(0, 0, 0, 0.07);
+      overflow: hidden;
+    }
+    .header {
+      padding: 18px 20px;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .body {
+      padding: 18px 20px;
+      display: grid;
+      gap: 12px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      resize: vertical;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font: inherit;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    button {
+      border: 0;
+      background: var(--primary);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+    .status {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .box {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      background: #fafafa;
+      white-space: pre-wrap;
+      line-height: 1.5;
+      min-height: 60px;
+    }
+    .sources {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .tag {
+      border: 1px solid #c7d2fe;
+      background: #eef2ff;
+      color: #3730a3;
+      font-size: 0.8rem;
+      border-radius: 999px;
+      padding: 4px 10px;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <section class="header">
+      <span>Consulta IA DPE-BA</span>
+      <span id="health" class="status">Verificando API...</span>
+    </section>
+    <section class="body">
+      <label for="pergunta"><strong>Pergunta</strong></label>
+      <textarea id="pergunta" placeholder="Ex.: Qual o conteudo da Portaria 68 de 2007?"></textarea>
+
+      <div class="row">
+        <button id="btn">Consultar</button>
+        <span id="status" class="status"></span>
+      </div>
+
+      <label><strong>Resposta</strong></label>
+      <div id="resposta" class="box">Aguardando consulta...</div>
+
+      <label><strong>Fontes</strong></label>
+      <div id="fontes" class="sources"></div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = ''
+    const btn = document.getElementById('btn')
+    const perguntaInput = document.getElementById('pergunta')
+    const respostaEl = document.getElementById('resposta')
+    const fontesEl = document.getElementById('fontes')
+    const statusEl = document.getElementById('status')
+    const healthEl = document.getElementById('health')
+
+    async function checkHealth() {
+      try {
+        const res = await fetch(`${API_BASE}/api/health`)
+        healthEl.textContent = res.ok ? 'API online' : 'API indisponivel'
+      } catch (_err) {
+        healthEl.textContent = 'API indisponivel'
+      }
+    }
+
+    function setLoading(loading) {
+      btn.disabled = loading
+      statusEl.textContent = loading ? 'Consultando base...' : ''
+    }
+
+    function renderFontes(fontes) {
+      fontesEl.innerHTML = ''
+      if (!fontes || fontes.length === 0) {
+        fontesEl.textContent = 'Sem fontes retornadas.'
+        return
+      }
+      for (const fonte of fontes) {
+        const tag = document.createElement('span')
+        tag.className = 'tag'
+        tag.textContent = fonte
+        fontesEl.appendChild(tag)
+      }
+    }
+
+    async function consultar() {
+      const pergunta = perguntaInput.value.trim()
+      if (!pergunta) return
+
+      setLoading(true)
+      respostaEl.textContent = 'Processando...'
+      fontesEl.innerHTML = ''
+
+      try {
+        const response = await fetch(`${API_BASE}/api/consulta`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pergunta }),
+        })
+        const data = await response.json()
+        if (!response.ok) {
+          respostaEl.textContent = `Erro: ${data.erro || 'Falha na consulta'}`
+          renderFontes([])
+          return
+        }
+        respostaEl.textContent = data.resposta || 'Sem resposta.'
+        renderFontes(data.fontes || [])
+      } catch (err) {
+        respostaEl.textContent = `Erro de conexao: ${err.message}`
+        renderFontes([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    btn.addEventListener('click', consultar)
+    perguntaInput.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        consultar()
+      }
+    })
+
+    checkHealth()
+  </script>
+</body>
+</html>
